@@ -24,38 +24,52 @@ def split_movies_row(row):
     return [columns[0], columns[1], extract_movie_year(columns[1]), columns[2]]
 
 
-if __name__ == '__main__':
+def get_argument_parser():
+
     p = argparse.ArgumentParser(
-            description="Twitter user feeds movie rating application determine the top "
+        description="Twitter user feeds movie rating application determine the top "
                     "ranked gener for the past number of years"
-        )
+    )
     p.add_argument(
-                "-ratings_path",
-                "--ratings_path",
-                required=False,
-                type=str,
-                help="ratings.dat file path",
-                default="./data/ratings.dat")
+        "-ratings_path",
+        "--ratings_path",
+        required=False,
+        type=str,
+        help="ratings.dat file path",
+        default="./data/ratings.dat")
     p.add_argument(
-            "-movies_path",
-            "--movies_path",
-            required=False,
-            type=str,
-            help="movies.dat file path",
-            default="./data/movies.dat"
-        )
+        "-movies_path",
+        "--movies_path",
+        required=False,
+        type=str,
+        help="movies.dat file path",
+        default="./data/movies.dat"
+    )
     p.add_argument(
-            "-num",
-            "--no_years",
-            required=False,
-            type=int,
-            default=10,
-            help="number of years results to calculate"
-        )
-    args = p.parse_args()
+        "-num",
+        "--no_years",
+        required=False,
+        type=int,
+        default=10,
+        help="number of years results to calculate"
+    )
+    p.add_argument(
+        "-o",
+        "--output_path",
+        required=False,
+        type=str,
+        default="./output_results"
+    )
+
+    return p.parse_args()
+
+
+if __name__ == '__main__':
+    args = get_argument_parser()
     ratings = args.ratings_path
     movies = args.movies_path
     no_years = args.no_years
+    output_path = args.output_path
 
     spark = SparkSession.builder.appName("TwitterMovieRatings").getOrCreate()
 
@@ -86,12 +100,6 @@ if __name__ == '__main__':
                 movie_schema
             )
 
-    # movies_df has some non-ascii characters need to set the encoding to utf-8 to display movies_df
-    import sys
-    reload(sys)
-    sys.setdefaultencoding('utf-8')
-
-    #movies_df.show()
     last_decade_df = movies_df.select("movie_year") \
         .distinct() \
         .sort("movie_year", ascending=False) \
@@ -101,16 +109,24 @@ if __name__ == '__main__':
         .join(ratings_df, on=['movie_id']) \
         .withColumn("gener", explode(split('movie_gener', '\|')))
 
-    #joined_df.show(100, False)
-    #joined_df.filter(joined_df["movie_gener"] == "").show(100, False)
-
-    joined_df.select("movie_year", "gener", "rating") \
+    # join the two dataframes on 'movie_id' filter out rows with empty gener and do the aggregation
+    result_df = joined_df.select("movie_year", "gener", "rating") \
         .filter(joined_df["movie_gener"] != "") \
         .groupby("movie_year", "gener") \
         .sum("rating") \
         .orderBy("movie_year","gener") \
         .sort("movie_year", ascending=False) \
-        .show(200, False)
+        .select("movie_year", "gener")
+
+    result_df.show(100, False)
+    # final step to spit out the output to a csv file
+    result_df\
+        .coalesce(1) \
+        .write \
+        .format("csv") \
+        .mode("overwrite") \
+        .options(header="true", sep=",") \
+        .save(output_path)
 
     spark.stop()
 
