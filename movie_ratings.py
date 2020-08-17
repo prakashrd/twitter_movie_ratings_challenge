@@ -1,7 +1,8 @@
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType
-from pyspark.sql.functions import explode, split, regexp_extract, udf
+from pyspark.sql.functions import explode, split
 from pyspark.sql import SparkSession
 import re
+import argparse
 
 
 def extract_movie_year(movie_title):
@@ -24,11 +25,39 @@ def split_movies_row(row):
 
 
 if __name__ == '__main__':
-    print("Lets start it")
+    p = argparse.ArgumentParser(
+            description="Twitter user feeds movie rating application determine the top "
+                    "ranked gener for the past number of years"
+        )
+    p.add_argument(
+                "-ratings_path",
+                "--ratings_path",
+                required=False,
+                type=str,
+                help="ratings.dat file path",
+                default="./data/ratings.dat")
+    p.add_argument(
+            "-movies_path",
+            "--movies_path",
+            required=False,
+            type=str,
+            help="movies.dat file path",
+            default="./data/movies.dat"
+        )
+    p.add_argument(
+            "-num",
+            "--no_years",
+            required=False,
+            type=int,
+            default=10,
+            help="number of years results to calculate"
+        )
+    args = p.parse_args()
+    ratings = args.ratings_path
+    movies = args.movies_path
+    no_years = args.no_years
 
-    spark = SparkSession.builder.appName("SimpleApp").getOrCreate()
-    extract_year_udf = udf(lambda t: extract_movie_year(t), IntegerType())
-    spark.udf.register("extract_movie_year", extract_year_udf)
+    spark = SparkSession.builder.appName("TwitterMovieRatings").getOrCreate()
 
     ratings_schema = StructType([
                         StructField("user_id", StringType(), False)
@@ -36,6 +65,7 @@ if __name__ == '__main__':
                         , StructField("rating", IntegerType(), False)
                         , StructField("rating_timestamp", StringType(), False)
                     ])
+
     movie_schema = StructType([
                     StructField("movie_id", StringType(), False),
                     StructField("movie_title", StringType(), False),
@@ -47,12 +77,12 @@ if __name__ == '__main__':
     #movies_df = spark.read.csv("ratings.dat", header=False, sep="::", schema=ratings_schema)
 
     ratings_df = spark.createDataFrame(
-                spark.read.text("./data/ratings.dat").rdd.map(lambda line: split_ratings_row(line[0])),
+                spark.read.text(ratings).rdd.map(lambda line: split_ratings_row(line[0])),
                 ratings_schema
             )
 
     movies_df = spark.createDataFrame(
-                spark.read.text("./data/movies.dat").rdd.map(lambda line: split_movies_row(line[0])),
+                spark.read.text(movies).rdd.map(lambda line: split_movies_row(line[0])),
                 movie_schema
             )
 
@@ -65,7 +95,7 @@ if __name__ == '__main__':
     last_decade_df = movies_df.select("movie_year") \
         .distinct() \
         .sort("movie_year", ascending=False) \
-        .limit(10)
+        .limit(no_years)
 
     joined_df = movies_df.join(last_decade_df, on=["movie_year"])\
         .join(ratings_df, on=['movie_id']) \
@@ -80,7 +110,7 @@ if __name__ == '__main__':
         .sum("rating") \
         .orderBy("movie_year","gener") \
         .sort("movie_year", ascending=False) \
-        .show()
+        .show(200, False)
 
     spark.stop()
 
